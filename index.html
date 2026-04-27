@@ -867,8 +867,12 @@
             <input type="text" class="input mono" id="workflowId" value="2044693321288781825">
           </div>
         </div>
+        <div style="margin-top:14px;">
+          <label class="label">访问密码 <span class="opt">accessPassword · 加密工作流必填</span></label>
+          <input type="password" class="input mono" id="accessPassword" placeholder="若工作流被作者加密，请填入访问密码" autocomplete="off">
+        </div>
         <p style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.6;">
-          API Key 仅保存在当前浏览器本地，不会上传至任何第三方服务器。如遇跨域错误，请将此 HTML 文件下载至本地并用浏览器直接打开。
+          API Key 与访问密码仅保存在当前浏览器本地，不会上传至任何第三方服务器。如遇跨域错误，请将此 HTML 文件下载至本地并用浏览器直接打开。
         </p>
       </div>
     </div>
@@ -1014,6 +1018,7 @@ const TRANSPARENT_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABC
 const state = {
   apiKey: '',
   workflowId: '2044693321288781825',
+  accessPassword: '',  // 工作流访问密码（加密工作流必填）
   images: { model: null, top: null, pants: null },   // base64 data URLs
   imageDims: { model: null, top: null, pants: null }, // {w,h}
   resolution: '2k',
@@ -1028,6 +1033,7 @@ function saveSettings() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       apiKey: state.apiKey,
       workflowId: state.workflowId,
+      accessPassword: state.accessPassword,
     }));
   } catch(e) {}
 }
@@ -1036,6 +1042,7 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     if (s.apiKey) state.apiKey = s.apiKey;
     if (s.workflowId) state.workflowId = s.workflowId;
+    if (s.accessPassword) state.accessPassword = s.accessPassword;
   } catch(e) {}
 }
 
@@ -1101,6 +1108,10 @@ async function apiUpload(base64, apiKey, filename) {
 function friendlyError(raw) {
   if (!raw) return null;
   const s = String(raw);
+  // 加密工作流错误
+  if (/已加密|accessPassword|access.?password|encrypted/i.test(s)) {
+    return '该工作流已被作者加密，请在"接口设置"中填入正确的访问密码（accessPassword）后重试。';
+  }
   // NODE_INFO_MISMATCH(nodeId=13, fieldName=image, reason=node_not_found_in_workflow)
   const m = s.match(/NODE_INFO_MISMATCH.*?nodeId=(\d+).*?reason=(\w+)/);
   if (m) {
@@ -1128,19 +1139,24 @@ function friendlyError(raw) {
   return s;
 }
 
-async function apiRun(workflowId, nodeInfoList, apiKey) {
+async function apiRun(workflowId, nodeInfoList, apiKey, accessPassword) {
+  const body = {
+    addMetadata: true,
+    nodeInfoList,
+    instanceType: 'default',
+    usePersonalQueue: false,
+  };
+  // 仅当填写了访问密码时才加入字段，避免对未加密工作流产生影响
+  if (accessPassword) {
+    body.accessPassword = accessPassword;
+  }
   const res = await safeFetch(`${API_BASE}/run/workflow/${workflowId}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     },
-    body: JSON.stringify({
-      addMetadata: true,
-      nodeInfoList,
-      instanceType: 'default',
-      usePersonalQueue: false,
-    })
+    body: JSON.stringify(body)
   }, '工作流提交');
   return await res.json();
 }
@@ -1232,6 +1248,10 @@ document.getElementById('apiKey').addEventListener('input', e => {
 });
 document.getElementById('workflowId').addEventListener('input', e => {
   state.workflowId = e.target.value.trim();
+  saveSettings();
+});
+document.getElementById('accessPassword').addEventListener('input', e => {
+  state.accessPassword = e.target.value.trim();
   saveSettings();
 });
 
@@ -1412,6 +1432,7 @@ function addToQueue() {
     doubleMode: state.doubleMode,
     apiKey: state.apiKey,
     workflowId: state.workflowId,
+    accessPassword: state.accessPassword,
     createdAt: Date.now(),
     startedAt: null,
     phaseStartedAt: null,
@@ -1513,7 +1534,7 @@ async function processNext() {
       nodeInfoList.push({ nodeId: '13', fieldName: 'image', fieldValue: pantsFile });
     }
 
-    const submit = await apiRun(task.workflowId, nodeInfoList, task.apiKey);
+    const submit = await apiRun(task.workflowId, nodeInfoList, task.apiKey, task.accessPassword);
     if (!submit.taskId) {
       throw new Error(friendlyError(submit.errorMessage || submit.msg) || '提交失败，请检查工作流 ID 与节点配置');
     }
@@ -1771,6 +1792,7 @@ setInterval(() => {
 loadSettings();
 document.getElementById('apiKey').value = state.apiKey;
 document.getElementById('workflowId').value = state.workflowId;
+document.getElementById('accessPassword').value = state.accessPassword;
 if (!state.apiKey) document.getElementById('settings').classList.add('open');
 refreshSettingsStatus();
 renderQueue();
