@@ -755,6 +755,20 @@
     color: var(--bg);
     border-color: var(--primary);
   }
+  .task-result-actions button.edit {
+    color: var(--primary);
+    border-color: rgba(212,165,116,0.55);
+  }
+  .task-result-actions button.edit:hover {
+    color: var(--bg);
+  }
+  .task-edit-note {
+    margin: -4px 14px 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .task-edit-note strong { color: var(--primary); font-weight: 500; }
 
   .task-actions {
     display: flex;
@@ -1275,6 +1289,20 @@ function getDataURLDims(dataUrl) {
   });
 }
 
+async function imageUrlToDataURL(url) {
+  const res = await safeFetch(url, { method: 'GET', mode: 'cors' }, '读取生成图');
+  const blob = await res.blob();
+  if (!blob.type.startsWith('image/')) {
+    throw new Error('生成结果不是可编辑的图片文件');
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('转换生成图失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /* ======================== Settings panel ======================== */
 function toggleSettings() {
   document.getElementById('settings').classList.toggle('open');
@@ -1609,12 +1637,83 @@ function addToQueue() {
     cancelled: false,
     progress: 0,
     resolvedRatio: null,
+    editFrom: null,
+    editInstruction: null,
   };
   state.tasks.push(task);
   renderQueue();
   toast(`已加入队列 #${taskCounter}`, 'success');
 
   if (!queueProcessing) processNext();
+}
+
+function buildEditPrompt(editInstruction, doubleMode) {
+  const scope = doubleMode ? '图2/图3参考服饰' : '图2参考服饰';
+  return [
+    `请基于图1这张已生成的成片进行局部修改：${editInstruction}`,
+    `只修改上述不满意的位置，其他区域全部保持图1不变，包括人物身份、脸部五官、发型、姿势、身体比例、背景、光影、镜头、构图、服装主体版型和${scope}一致性。`,
+    '禁止重新换一张图，禁止大幅重绘，未被明确要求修改的细节保持像素级稳定。'
+  ].join('\n');
+}
+
+async function editResult(taskId, resultUrl) {
+  const sourceTask = state.tasks.find(x => x.id === taskId);
+  if (!sourceTask || sourceTask.status !== 'success') return;
+  const instruction = window.prompt(
+    '请输入要针对这张生成图修改的地方：',
+    '例如：只把袖口花纹修正得更接近参考图，其他都不变'
+  );
+  if (!instruction || !instruction.trim()) return;
+  if (!sourceTask.images || !sourceTask.images.top) {
+    toast('原任务缺少服饰参考图，无法创建修改任务', 'error');
+    return;
+  }
+
+  try {
+    toast('正在读取生成图，准备创建修改任务…');
+    const resultImage = await imageUrlToDataURL(resultUrl);
+    const dims = await getDataURLDims(resultImage).catch(() => sourceTask.modelDims || null);
+    taskCounter += 1;
+    const promptMain = buildEditPrompt(instruction.trim(), sourceTask.doubleMode);
+    const task = {
+      id: 'task_' + Date.now() + '_' + taskCounter,
+      idx: taskCounter,
+      status: 'pending',
+      images: {
+        model: resultImage,
+        top: sourceTask.images.top,
+        pants: sourceTask.doubleMode ? sourceTask.images.pants : null,
+      },
+      modelDims: dims ? { ...dims } : null,
+      promptMain,
+      colorReq: sourceTask.colorReq || '',
+      fullPrompt: buildFullPrompt(promptMain, sourceTask.colorReq || '', sourceTask.doubleMode),
+      resolution: sourceTask.resolution,
+      aspectRatio: sourceTask.aspectRatio,
+      doubleMode: sourceTask.doubleMode,
+      apiKey: sourceTask.apiKey,
+      workflowId: sourceTask.workflowId,
+      accessPassword: sourceTask.accessPassword,
+      createdAt: Date.now(),
+      startedAt: null,
+      phaseStartedAt: null,
+      finishedAt: null,
+      remoteTaskId: null,
+      results: null,
+      error: null,
+      cancelled: false,
+      progress: 0,
+      resolvedRatio: null,
+      editFrom: sourceTask.idx,
+      editInstruction: instruction.trim(),
+    };
+    state.tasks.push(task);
+    renderQueue();
+    toast(`已基于 #${sourceTask.idx} 创建修改任务 #${task.idx}`, 'success');
+    if (!queueProcessing) processNext();
+  } catch (err) {
+    toast((err && err.message) || '读取生成图失败，无法创建修改任务', 'error');
+  }
 }
 
 /* ======================== Queue processor ======================== */
@@ -1873,19 +1972,27 @@ function renderQueue() {
       .join('');
 
     const resultHtml = t.results && t.results.length
-      ? t.results.filter(r => r.url).map(r => `
+      ? t.results.filter(r => r.url).map(r => {
+          const resultUrl = escapeHtml(r.url);
+          const encodedUrl = encodeURIComponent(r.url);
+          return `
           <div class="task-result">
-            <img src="${r.url}" onclick="openLightbox('${r.url}')" style="cursor:zoom-in;">
+            <img src="${resultUrl}" onclick="openLightbox(decodeURIComponent('${encodedUrl}'))" style="cursor:zoom-in;">
             <div class="task-result-actions">
-              <a href="${r.url}" download target="_blank">下载</a>
-              <button onclick="openLightbox('${r.url}')">放大</button>
+              <button class="edit" onclick="editResult('${t.id}', decodeURIComponent('${encodedUrl}'))" title="以这张结果图作为新模特图，只按你的修改要求局部调整">修改此图</button>
+              <a href="${resultUrl}" download target="_blank">下载</a>
+              <button onclick="openLightbox(decodeURIComponent('${encodedUrl}'))">放大</button>
             </div>
-          </div>`).join('')
+          </div>`;
+        }).join('')
       : '';
 
     const errorHtml = t.error ? `<div class="task-error">${escapeHtml(t.error)}</div>` : '';
     const progressHtml = showProgress
       ? `<div class="task-progress"><div class="task-progress-bar" style="width:${pct}%"></div></div>`
+      : '';
+    const editNoteHtml = t.editFrom
+      ? `<div class="task-edit-note"><strong>基于 #${t.editFrom} 修改：</strong>${escapeHtml(t.editInstruction || '')}</div>`
       : '';
 
     let actions = '';
@@ -1928,6 +2035,7 @@ function renderQueue() {
             </div>
           </div>
         </div>
+        ${editNoteHtml}
         ${errorHtml}
         ${resultHtml}
         ${actions ? `<div class="task-actions">${actions}</div>` : ''}
