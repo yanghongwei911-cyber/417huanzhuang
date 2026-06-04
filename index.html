@@ -214,6 +214,52 @@
 
   .input-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
+
+  .preset-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 10px;
+  }
+  .preset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: rgba(212,165,116,0.08);
+    border: 1px solid rgba(212,165,116,0.22);
+    color: var(--text-dim);
+    border-radius: 999px;
+    font-family: var(--sans);
+    font-size: 12px;
+    line-height: 1.3;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .preset-chip:hover {
+    color: var(--text);
+    border-color: rgba(212,165,116,0.55);
+    background: rgba(212,165,116,0.14);
+  }
+  .preset-chip.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .preset-chip .preset-type {
+    font-family: var(--mono);
+    font-size: 10px;
+    opacity: 0.72;
+  }
+  .preset-help {
+    margin-top: -2px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
   /* ============ Upload Zones ============ */
   .uploads {
     display: grid;
@@ -921,13 +967,17 @@
       </div>
       <div style="margin-bottom:16px;">
         <label class="label">主要提示词 <span class="req">*</span></label>
-        <textarea class="textarea" id="prompt" placeholder="例如：让图1中的模特穿上图2的全棉材质上衣，需确保衣服颜色的一致性。"></textarea>
+        <div class="preset-row" id="mainPromptPresets"></div>
+        <p class="preset-help">点击常用选项会直接填入主要提示词，可继续手动修改。</p>
+        <textarea class="textarea" id="prompt" placeholder="例如：图1女生上衣换成图2女生上衣的花型，只修改花型，其他不改动"></textarea>
       </div>
       <div>
-        <label class="label">颜色要求 <span class="opt">严格 · 可选</span></label>
-        <textarea class="textarea" id="colorReq" placeholder="例如：上衣必须是纯黑色，裤子必须是浅蓝色牛仔，不允许偏色、串色、自动改成别的颜色。"></textarea>
+        <label class="label">额外要求 <span class="opt">可叠加 · 可选</span></label>
+        <div class="preset-row" id="extraReqPresets"></div>
+        <p class="preset-help">额外要求支持多选叠加；再次点击已选选项可取消，也可以在文本框中继续补充。</p>
+        <textarea class="textarea" id="colorReq" placeholder="例如：注意面料是【】材质质感的，面料需要跟图【】保持一致，不要有偏差。"></textarea>
         <p style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.6;">
-          填写后，系统会自动拼接"严格按指定颜色生成、禁止擅自改色/偏色"的约束语，尽量减少颜色识别错误。
+          填写后，系统会自动拼接额外约束；若包含颜色要求，会继续强化“严格按指定颜色生成、禁止擅自改色/偏色”，尽量减少识别错误。
         </p>
       </div>
     </section>
@@ -1364,18 +1414,134 @@ function toggleDouble() {
   }
 }
 
+/* ======================== Prompt presets ======================== */
+const MAIN_PROMPT_PRESETS = [
+  {
+    id: 'pattern-only',
+    label: '只改动花型',
+    text: '图1女生上衣换成图2女生上衣的花型，只修改花型，其他不改动'
+  },
+  {
+    id: 'change-clothes',
+    label: '只修改服装',
+    text: '图1女生上衣换成图2女生上衣，要求版型材质都跟图2的一样，只修改上衣，保持人物一致性'
+  },
+];
+
+const EXTRA_REQ_PRESETS = [
+  {
+    id: 'face-keep',
+    type: '额外要求',
+    label: '脸部保持',
+    text: '确保人物脸部、五官、妆容、肤色、皮肤纹理、头发、手部、身体比例、背景、光影全部保持原图不变。脸部区域禁止重绘，保持原图像素级细节，不磨皮，不美颜，不改变五官，不改变肤色。'
+  },
+  {
+    id: 'fabric',
+    type: '额外要求',
+    label: '面料要求',
+    text: '注意面料是【】材质质感的，面料需要跟图【】保持一致，不要有偏差。'
+  },
+  {
+    id: 'color',
+    type: '额外要求',
+    label: '颜色要求',
+    text: '注意颜色【】的，颜色需要跟图【】保持一致，不要有偏差。'
+  },
+];
+
+function renderPromptPresets() {
+  const mainWrap = document.getElementById('mainPromptPresets');
+  const extraWrap = document.getElementById('extraReqPresets');
+  if (!mainWrap || !extraWrap) return;
+
+  mainWrap.innerHTML = MAIN_PROMPT_PRESETS.map(item => `
+    <button type="button" class="preset-chip" data-preset-kind="main" data-preset-id="${item.id}" title="${escapeHtml(item.text)}">
+      ${escapeHtml(item.label)}
+    </button>
+  `).join('');
+
+  extraWrap.innerHTML = EXTRA_REQ_PRESETS.map(item => `
+    <button type="button" class="preset-chip" data-preset-kind="extra" data-preset-id="${item.id}" title="${escapeHtml(item.text)}">
+      <span class="preset-type">${escapeHtml(item.type)}</span>${escapeHtml(item.label)}
+    </button>
+  `).join('');
+
+  mainWrap.addEventListener('click', onPresetClick);
+  extraWrap.addEventListener('click', onPresetClick);
+  document.getElementById('prompt').addEventListener('input', refreshPresetActiveStates);
+  document.getElementById('colorReq').addEventListener('input', refreshPresetActiveStates);
+  refreshPresetActiveStates();
+}
+
+function onPresetClick(e) {
+  const btn = e.target.closest('.preset-chip');
+  if (!btn) return;
+  const kind = btn.dataset.presetKind;
+  const id = btn.dataset.presetId;
+
+  if (kind === 'main') {
+    const item = MAIN_PROMPT_PRESETS.find(x => x.id === id);
+    if (!item) return;
+    document.getElementById('prompt').value = item.text;
+    refreshPresetActiveStates();
+    toast(`已选择主要提示词：${item.label}`, 'success');
+    return;
+  }
+
+  const item = EXTRA_REQ_PRESETS.find(x => x.id === id);
+  if (!item) return;
+  const textarea = document.getElementById('colorReq');
+  const current = textarea.value;
+  const wasSelected = current.includes(item.text);
+  textarea.value = wasSelected
+    ? removePresetText(current, item.text)
+    : appendPresetText(current, item.text);
+  refreshPresetActiveStates();
+  toast(wasSelected ? `已取消：${item.label}` : `已添加额外要求：${item.label}`, 'success');
+}
+
+function appendPresetText(current, text) {
+  const trimmed = current.trim();
+  return trimmed ? `${trimmed}\n${text}` : text;
+}
+
+function removePresetText(current, text) {
+  return current
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && line !== text)
+    .join('\n');
+}
+
+function refreshPresetActiveStates() {
+  const mainValue = document.getElementById('prompt').value.trim();
+  const extraValue = document.getElementById('colorReq').value;
+
+  document.querySelectorAll('[data-preset-kind="main"]').forEach(btn => {
+    const item = MAIN_PROMPT_PRESETS.find(x => x.id === btn.dataset.presetId);
+    btn.classList.toggle('active', !!item && mainValue === item.text);
+  });
+  document.querySelectorAll('[data-preset-kind="extra"]').forEach(btn => {
+    const item = EXTRA_REQ_PRESETS.find(x => x.id === btn.dataset.presetId);
+    btn.classList.toggle('active', !!item && extraValue.includes(item.text));
+  });
+}
+
 /* ======================== Prompt builder ======================== */
-function buildFullPrompt(mainPrompt, colorReq, doubleMode) {
+function buildFullPrompt(mainPrompt, extraReq, doubleMode) {
   let p = (mainPrompt || '').trim();
   // In single mode, user often writes "图3" meaning the garment reference image —
   // normalize it to "图2" since only one garment slot is used
   if (!doubleMode) {
     p = p.replaceAll('图3', '图2');
   }
-  const c = (colorReq || '').trim();
-  if (c) {
-    const scope = doubleMode ? '上衣与下装' : '目标服装';
-    p += `\n\n【颜色严格约束】\n${c}\n\n请严格按照以上颜色要求生成，${scope}的颜色必须与要求完全一致。禁止擅自改色、偏色、串色、提亮、压暗、改变冷暖色调，禁止把纯色改成花色或把花色改成其他配色；如果识别不确定，也必须优先遵守上述颜色要求。`;
+  const extra = (extraReq || '').trim();
+  if (extra) {
+    p += `\n\n【额外要求】\n${extra}`;
+    if (/颜色|色彩|偏色|串色|改色/.test(extra)) {
+      const scope = doubleMode ? '上衣与下装' : '目标服装';
+      p += `\n\n【颜色严格约束】\n请严格按照以上颜色相关要求生成，${scope}的颜色必须与要求完全一致。禁止擅自改色、偏色、串色、提亮、压暗、改变冷暖色调，禁止把纯色改成花色或把花色改成其他配色；如果识别不确定，也必须优先遵守上述颜色要求。`;
+    }
   }
   return p;
 }
@@ -1795,6 +1961,7 @@ document.getElementById('workflowId').value = state.workflowId;
 document.getElementById('accessPassword').value = state.accessPassword;
 if (!state.apiKey) document.getElementById('settings').classList.add('open');
 refreshSettingsStatus();
+renderPromptPresets();
 renderQueue();
 </script>
 
