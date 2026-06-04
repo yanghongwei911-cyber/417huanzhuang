@@ -789,6 +789,16 @@
     transition: all 0.15s;
   }
   .task-btn:hover { border-color: var(--border-light); color: var(--text); }
+  .task-btn.edit-primary {
+    border-color: rgba(212,165,116,0.55);
+    color: var(--primary);
+    background: rgba(212,165,116,0.06);
+  }
+  .task-btn.edit-primary:hover {
+    border-color: var(--primary);
+    color: var(--bg);
+    background: var(--primary);
+  }
   .task-btn.danger:hover { border-color: var(--danger); color: var(--danger); background: rgba(193,107,94,0.05); }
 
   /* Progress bar */
@@ -1656,6 +1666,18 @@ function buildEditPrompt(editInstruction, doubleMode) {
   ].join('\n');
 }
 
+function editTaskResult(taskId) {
+  const sourceTask = state.tasks.find(x => x.id === taskId);
+  const firstResult = sourceTask && sourceTask.results
+    ? sourceTask.results.find(r => r.url)
+    : null;
+  if (!firstResult) {
+    toast('这个任务还没有可修改的结果图', 'error');
+    return;
+  }
+  editResult(taskId, firstResult.url);
+}
+
 async function editResult(taskId, resultUrl) {
   const sourceTask = state.tasks.find(x => x.id === taskId);
   if (!sourceTask || sourceTask.status !== 'success') return;
@@ -2000,6 +2022,9 @@ function renderQueue() {
       actions += `<button class="task-btn danger" onclick="cancelTask('${t.id}')">取消</button>`;
     }
     if (['success','failed','cancelled'].includes(t.status)) {
+      if (t.status === 'success' && t.results && t.results.some(r => r.url)) {
+        actions += `<button class="task-btn edit-primary" onclick="editTaskResult('${t.id}')" title="基于当前结果图继续局部修改">修改结果</button>`;
+      }
       actions += `<button class="task-btn" onclick="reuseTask('${t.id}')">回填参数</button>`;
       actions += `<button class="task-btn danger" onclick="removeTask('${t.id}')">移除</button>`;
     }
